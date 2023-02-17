@@ -1,8 +1,13 @@
 ﻿using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.IdentityModel.JsonWebTokens;
+using Microsoft.IdentityModel.Tokens;
 using Microsoft.VisualBasic;
 using PequenaAngel.Api.DTO;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
+using System.Text;
 
 namespace PequenaAngel.Api.Controllers
 {
@@ -12,12 +17,14 @@ namespace PequenaAngel.Api.Controllers
     {
         private readonly UserManager<IdentityUser> _userManager;
         private readonly SignInManager<IdentityUser> _signInManager;
+        private readonly IConfiguration _configuration;
 
-
-        public AuthorizationController(UserManager<IdentityUser> userManager, SignInManager<IdentityUser> signInManager)
+        public AuthorizationController(UserManager<IdentityUser> userManager, 
+            SignInManager<IdentityUser> signInManager, IConfiguration configuration)
         {
             _userManager = userManager;
             _signInManager = signInManager;
+            _configuration = configuration;    
         }
 
         [HttpGet]
@@ -45,7 +52,7 @@ namespace PequenaAngel.Api.Controllers
             }
 
             await _signInManager.SignInAsync(user, false);
-            return Ok();
+            return Ok(GeraToken(model));
         }
 
         [HttpPost("login")]
@@ -62,13 +69,52 @@ namespace PequenaAngel.Api.Controllers
 
             if (result.Succeeded)
             {
-                return Ok();
+                return Ok(GeraToken(user));
             }
             else
             {
                 ModelState.AddModelError(string.Empty, "Login Inválido!");
                 return BadRequest(ModelState);
             }
+        }
+
+        private UserTokenDTO GeraToken(UserDTO user) 
+        {
+            //Declaration by user
+            var claims = new[]
+            {
+                new Claim(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.UniqueName, user.Email),
+                new Claim("meuPet","Gohan"),
+                new Claim(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+            };
+
+            //gera uma chave com base em um algoritomo simetrico
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]));
+
+            //gera a assinatura digital do token usando o algoritimo Hmac e a chave privada
+            var credentials = new SigningCredentials(key,SecurityAlgorithms.HmacSha256);
+
+            //tempo expiracao token
+            var expiration = DateTime.UtcNow.AddHours(double.Parse(_configuration["TokenConfiguration:ExpireHours"]));
+
+            //classe que representa um token e gera o token
+            JwtSecurityToken token = new JwtSecurityToken(
+                issuer: _configuration["TokenConfiguration:Issuer"],
+                audience: _configuration["TokenConfiguration:Audience"],
+                claims: claims,
+                expires: expiration,
+                signingCredentials: credentials
+                );
+
+            //retorna user com o token e infos
+            return new UserTokenDTO()
+            {
+                Autenticated = true,
+                Token = new JwtSecurityTokenHandler().WriteToken(token),
+                Expiration = expiration,
+                Message = "Token JWT ok!"
+            };
+
         }
     }
 }
